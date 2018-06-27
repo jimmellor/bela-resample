@@ -40,8 +40,15 @@ int gActiveBuffer = 0;
 // this variable will let us know if the buffer doesn't manage to load in time
 int gDoneLoadingBuffer = 1;
 
+// Set the analog channel to read the sample rate ratio
+int gSensorInputRatio = 0;
+
+int gAudioFramesPerAnalogFrame = 0;
+
 SNDFILE *sndfile ;
 SF_INFO sfinfo ;
+
+Scope scope;
 
 AuxiliaryTask gFillBufferTask;
 
@@ -98,11 +105,17 @@ bool setup(BelaContext *context, void *userData)
     // Initialise auxiliary tasks
 	if((gFillBufferTask = Bela_createAuxiliaryTask(&fillBuffer, 90, "fill-buffer")) == 0)
 		return false;
+		
+	if(context->analogFrames)
+		gAudioFramesPerAnalogFrame = context->audioFrames / context->analogFrames;
 	
 	int err;
 	
     // Setup resampler
     audioSrc = src_callback_new(srcCallback, SRC_LINEAR, 1, &err, NULL);
+    
+    // Setup scope
+    scope.setup(2, context->audioSampleRate);
     
     // load the sound file
     
@@ -111,6 +124,9 @@ bool setup(BelaContext *context, void *userData)
 		cout << "Couldn't open file " << gFilename << ": " << sf_strerror(sndfile) << endl;
 		return 1;
 	}
+	
+	// read the inital state of the ratio potentiometer
+	gResampRatio = map(analogRead(context, 1, gSensorInputRatio), 0, 1, 0.1, 4);
 
 	int numChannelsInFile = sfinfo.channels;
 	
@@ -126,6 +142,12 @@ bool setup(BelaContext *context, void *userData)
 void render(BelaContext *context, void *userData)
 {
     for(unsigned int n = 0; n < context->audioFrames; n++) {
+    	
+    	if(!(n % gAudioFramesPerAnalogFrame)) {
+		    // Even audio samples: update frequency and amplitude from the matrix
+		   gResampRatio = map(analogRead(context, n/gAudioFramesPerAnalogFrame, gSensorInputRatio), 0, 1, 0.1, 4);
+		   //gResampRatio = analogRead(context, n/gAudioFramesPerAnalogFrame, gSensorInputRatio);
+		}
         
         // Increment read pointer and reset to 0 when end of file is reached
         if(++gReadPtr >= RESAMP_BUFFER_LEN) {
@@ -144,9 +166,10 @@ void render(BelaContext *context, void *userData)
     	    // float out = gSampleBuf[gActiveBuffer][channel%NUM_CHANNELS].samples[gReadPtr];
     	    float out = gResampBuffer[gActiveBuffer][gReadPtr];
     		audioWrite(context, n, channel, out);
+    		scope.log(out, gResampRatio);
     	}
-    	
     }
+    	
 }
 
 
